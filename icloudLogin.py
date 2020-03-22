@@ -14,7 +14,8 @@ password = config['iCloud']['password']
 
 api = PyiCloudService(email, password, ICLOUD_LOGINS_FOLDER)
 
-if api.requires_2sa:
+if api.requires_2sa:§
+
     print("Two-factor authentication required. Your trusted devices are:")
 
     devices = api.trusted_devices

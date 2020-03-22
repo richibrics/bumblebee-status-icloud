@@ -1,4 +1,14 @@
-from pyicloud import PyiCloudService
+"""
+Requires the following python module:
+    * pyicloud
+Parameters:
+    * nic.exclude: Comma-separated list of interface prefixes to exclude (defaults to "lo,virbr,docker,vboxnet,veth,br")
+    * nic.include: Comma-separated list of interfaces to include
+    * nic.states: Comma-separated list of states to show (prefix with "^" to invert - i.e. ^down -> show all devices that are not in state down)
+    * nic.format: Format string (defaults to "{intf} {state} {ip} {ssid}")
+"""
+import json as JSON
+
 import configparser
 import os
 import time
@@ -6,6 +16,11 @@ import threading
 import bumblebee.input
 import bumblebee.output
 import bumblebee.engine
+
+try:
+    from pyicloud import PyiCloudService
+except ImportError:
+    from pyicloud import PyiCloudService
 
 ICLOUD_LOGINS_FOLDER = "iCloudLogins/"
 REFRESH_TIMER = 60  # Seconds
@@ -33,12 +48,17 @@ def UpdateBattery():
         devicesInfo = []
         devices = api.devices
         for device in devices:
-            status = device.status()
-            deviceName = str(status['name'])
-            devicePercentage = int(round(status['batteryLevel']*100))
-            if(devicePercentage > 0):  # Cause iMacs have 0% battery in status
-                devicesInfo.append(
-                    {'name': deviceName, 'battery': devicePercentage})
+            info={}
+            status = device.status(['deviceClass','batteryStatus','modelDisplayName']) # https://github.com/picklepete/pyicloud/issues/220
+            info['name'] = str(status['modelDisplayName'])
+            info['battery'] = int(round(status['batteryLevel']*100))
+            info['class']=str(device ['deviceClass'])
+            if(device['batteryStatus']=="Charging"):
+                info['charging']=True
+            else:
+                info['charging']=False
+            if(info['battery'] > 0):  # Cause iMacs have 0% battery in status
+                devicesInfo.append(info)
         refreshing=False
         time.sleep(REFRESH_TIMER)
 
@@ -53,16 +73,16 @@ class Module(bumblebee.engine.Module):
         super(Module, self).__init__(engine, config, widgets)
         # bumblebee.output.Widget(full_text=self.icloud)
         self._update_widgets(widgets)
-
-    def update(self, widgets):
-        self._update_widgets(widgets)
+        self._exclude = tuple(filter(len, self.parameter("exclude", "imac").split(",")))
 
     def _update_widgets(self, widgets):
         if not refreshing: # Cause maybe i erase devices array while bar updates
+            # Removes devices to exclude
+            devicesInfoToAdd = [d for d in devicesInfo if not d['name'].startswith(self._exclude)]
             for widget in widgets:
                 widget.set("visited", False)
 
-            for device in devicesInfo:
+            for device in devicesInfoToAdd:
                 # Check if widget was already created
                 widget = self.widget(device['name'])
                 # If not, I create the widget for the new device with the name of the device, to help me find it later
@@ -73,11 +93,45 @@ class Module(bumblebee.engine.Module):
                 widget.full_text(device['name'] + ": " +
                                 str(device['battery'])+'%')
                 widget.set("visited", True)
+                widget.set("charging", device['charging'])
+                widget.set("class", device['class'])
+                widget.set("battery", device['battery'])
 
             # The widget I have not touched now are widget of devices that may be offline now then I remove them
             for widget in widgets:
                 if widget.get("visited") is False:
                     widgets.remove(widget)
+
+    def update(self, widgets):
+        self._update_widgets(widgets)
+
+    def state(self, widget):
+        states = []
+
+        if not widget.get("charging"):
+            if widget.get("battery") <=10:
+                states.append("critical")
+            elif widget.get("battery") <=20:
+                states.append("warning")
+
+        if widget.get("charging"):
+            states.append("charging")
+        else:
+            state="discharging-"
+            if(widget.get("battery")<=10):
+                state=state+'10'
+            elif(widget.get("battery")<=25):
+                state=state+'25'
+            elif(widget.get("battery")<=50):
+                state=state+'50'
+            elif(widget.get("battery")<=80):
+                state=state+'80'
+            else:
+                state=state+'100'
+            states.append(state)
+
+        states.append(widget.get("class"))
+        return states
 
 
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4

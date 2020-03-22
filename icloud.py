@@ -9,6 +9,7 @@ Parameters:
 """
 import json as JSON
 
+from pyicloud import PyiCloudService
 import configparser
 import os
 import time
@@ -17,10 +18,6 @@ import bumblebee.input
 import bumblebee.output
 import bumblebee.engine
 
-try:
-    from pyicloud import PyiCloudService
-except ImportError:
-    from pyicloud import PyiCloudService
 
 ICLOUD_LOGINS_FOLDER = "iCloudLogins/"
 REFRESH_TIMER = 60  # Seconds
@@ -36,13 +33,12 @@ config.read(currentPath + "icloud.ini")
 email = config['iCloud']['email']
 password = config['iCloud']['password']
 
-api = PyiCloudService(email, password, currentPath+ICLOUD_LOGINS_FOLDER)
-
 devicesInfo = []
 refreshing = False
 
 def UpdateBattery():
-    global api, devicesInfo, refreshing
+    global  devicesInfo, refreshing
+    api = PyiCloudService(email, password, currentPath+ICLOUD_LOGINS_FOLDER)
     while(True):
         refreshing = True
         devicesInfo = []
@@ -57,7 +53,7 @@ def UpdateBattery():
                 info['charging']=True
             else:
                 info['charging']=False
-            if(info['battery'] > 0):  # Cause iMacs have 0% battery in status
+            if(info['battery'] > 0):  # Cause iMacs/offline devices have 0% battery in status
                 devicesInfo.append(info)
         refreshing=False
         time.sleep(REFRESH_TIMER)
@@ -108,20 +104,16 @@ class Module(bumblebee.engine.Module):
     def state(self, widget):
         states = []
 
-        if not widget.get("charging"):
-            if widget.get("battery") <=10:
-                states.append("critical")
-            elif widget.get("battery") <=20:
-                states.append("warning")
-
         if widget.get("charging"):
             states.append("charging")
         else:
             state="discharging-"
             if(widget.get("battery")<=10):
+                states.append("critical")
                 state=state+'10'
             elif(widget.get("battery")<=25):
                 state=state+'25'
+                states.append("warning")
             elif(widget.get("battery")<=50):
                 state=state+'50'
             elif(widget.get("battery")<=80):

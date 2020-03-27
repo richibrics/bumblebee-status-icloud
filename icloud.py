@@ -7,7 +7,7 @@ Parameters:
     * nic.states: Comma-separated list of states to show (prefix with "^" to invert - i.e. ^down -> show all devices that are not in state down)
     * nic.format: Format string (defaults to "{intf} {state} {ip} {ssid}")
 """
-import json as JSON
+import arrow 
 
 from pyicloud import PyiCloudService
 import configparser
@@ -21,6 +21,7 @@ import bumblebee.engine
 
 ICLOUD_LOGINS_FOLDER = "iCloudLogins/"
 REFRESH_TIMER = 60  # Seconds
+DISPLAY_PROPERTY= 'modelDisplayName'
 
 currentPath = os.path.realpath(__file__)
 currentPath = currentPath[:currentPath.rfind('/')+1]
@@ -36,17 +37,27 @@ password = config['iCloud']['password']
 devicesInfo = []
 refreshing = False
 
+def Log(message):
+    current_time = arrow.utcnow().format('YYYY-MM-DD HH:mm:ss')
+    line=current_time+" | " +message+'\n'
+    f = open(currentPath+"log.txt", "a")
+    f.write(line)
+    f.close()
+
 def UpdateBattery():
+    Log("Thread started")
     global  devicesInfo, refreshing
     api = PyiCloudService(email, password, currentPath+ICLOUD_LOGINS_FOLDER)
     while(True):
         refreshing = True
+        Log("Refreshing")
+        Log(str(api))
         devicesInfo = []
         devices = api.devices
         for device in devices:
             info={}
-            status = device.status(['deviceClass','batteryStatus','modelDisplayName']) # https://github.com/picklepete/pyicloud/issues/220
-            info['name'] = str(status['modelDisplayName'])
+            status = device.status(['deviceClass','batteryStatus',DISPLAY_PROPERTY]) # https://github.com/picklepete/pyicloud/issues/220
+            info['name'] = str(status[DISPLAY_PROPERTY])
             info['battery'] = int(round(status['batteryLevel']*100))
             info['class']=str(device ['deviceClass'])
             if(device['batteryStatus']=="Charging"):
@@ -55,13 +66,13 @@ def UpdateBattery():
                 info['charging']=False
             if(info['battery'] > 0):  # Cause iMacs/offline devices have 0% battery in status
                 devicesInfo.append(info)
+        Log(str(devicesInfo))
         refreshing=False
         time.sleep(REFRESH_TIMER)
 
 
 thread = threading.Thread(target=UpdateBattery)
 thread.start()
-
 
 class Module(bumblebee.engine.Module):
     def __init__(self, engine, config):
@@ -70,6 +81,7 @@ class Module(bumblebee.engine.Module):
         # bumblebee.output.Widget(full_text=self.icloud)
         self._update_widgets(widgets)
         self._exclude = tuple(filter(len, self.parameter("exclude", "imac").split(",")))
+        Log("Init module")
 
     def _update_widgets(self, widgets):
         if not refreshing: # Cause maybe i erase devices array while bar updates
@@ -99,6 +111,11 @@ class Module(bumblebee.engine.Module):
                     widgets.remove(widget)
 
     def update(self, widgets):
+        global thread
+        if(not thread.is_alive()):
+            Log("Thread was not running: starting...")
+            thread = threading.Thread(target=UpdateBattery)
+            thread.start()
         self._update_widgets(widgets)
 
     def state(self, widget):
